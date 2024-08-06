@@ -3,19 +3,29 @@
  */
 package org.jpmml.maven.plugins;
 
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.io.Writer;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Predicate;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
+import java.util.stream.Collectors;
 
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.AbstractMojo;
@@ -25,6 +35,8 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
+import org.vafer.jdependency.Clazz;
+import org.vafer.jdependency.Clazzpath;
 
 @Mojo (
 	name = "create-classpath",
@@ -39,6 +51,9 @@ public class CreateClasspathMojo extends AbstractMojo {
 		readonly = true
 	)
 	MavenProject project;
+
+	@Parameter
+	Minify minify;
 
 	@Parameter (
 		required = true
@@ -82,16 +97,75 @@ public class CreateClasspathMojo extends AbstractMojo {
 
 			List<String> elements = new ArrayList<>();
 
-			for(Artifact artifact : artifacts){
-				elements.add(copyArtifactFile(artifact));
+			if(this.minify != null){
+				Clazzpath clazzpath = new Clazzpath();
+
+				Set<String> entryPoints = new LinkedHashSet<>();
+
+				entryPoints.addAll(this.minify.getEntryPoints());
+
+				for(Artifact artifact : artifacts){
+					File artifactFile = artifact.getFile();
+
+					clazzpath.addClazzpathUnit(artifactFile);
+
+					entryPoints.addAll(this.minify.getEntryPoints(artifactFile));
+				}
+
+				Set<Clazz> entryPointClazzes = entryPoints.stream()
+					.map(entryPoint -> clazzpath.getClazz(entryPoint))
+					.collect(Collectors.toSet());
+
+				Set<Clazz> removableClazzes = clazzpath.getClazzes();
+
+				entryPointClazzes.stream()
+					.forEach(entryPointClazz -> {
+						removableClazzes.remove(entryPointClazz);
+
+						Set<Clazz> transitiveDependencyClazzes = entryPointClazz.getTransitiveDependencies();
+						if(!transitiveDependencyClazzes.isEmpty()){
+							removableClazzes.removeAll(transitiveDependencyClazzes);
+						}
+					});
+
+				Predicate<JarEntry> predicate = new Predicate<JarEntry>(){
+
+					@Override
+					public boolean test(JarEntry jarEntry){
+						String name = jarEntry.getName();
+
+						if(name.endsWith(".class")){
+							Clazz clazz = clazzpath.getClazz(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
+
+							return !removableClazzes.contains(clazz);
+						}
+
+						return true;
+					}
+				};
+
+				for(Artifact artifact : artifacts){
+
+					if(this.minify.accept(artifact)){
+						elements.add(copyArtifactFile(artifact, predicate));
+					} else
+
+					{
+						elements.add(copyArtifactFile(artifact));
+					}
+				}
+			} else
+
+			{
+				for(Artifact artifact : artifacts){
+					elements.add(copyArtifactFile(artifact));
+				}
 			}
 
-			// XXX
-			String classpathFileName = "classpath.txt";
+			File outputFile = new File(this.outputDirectory, "classpath.txt");
 
-			Path outputPath = (this.outputDirectory.toPath()).resolve(classpathFileName);
-
-			try(Writer writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW)){
+			try(OutputStream os = new FileOutputStream(outputFile)){
+				Writer writer = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
 
 				for(Iterator<String> it = elements.iterator(); it.hasNext(); ){
 					writer.write(it.next());
@@ -100,22 +174,59 @@ public class CreateClasspathMojo extends AbstractMojo {
 						writer.write('\n');
 					}
 				}
+
+				writer.close();
 			}
 		} catch(Exception e){
 			throw new MojoExecutionException("Failed to create classpath", e);
 		}
 	}
 
-	private String copyArtifactFile(Artifact artifact) throws IOException {
-		File file = artifact.getFile();
+	private String copyArtifactFile(Artifact artifact, Predicate<JarEntry> predicate) throws IOException {
+		String artifactFileName = artifact.getArtifactId() + "-" + artifact.getVersion() + "-minified.jar";
 
-		// XXX
+		File inputFile = artifact.getFile();
+		File outputFile = new File(this.outputDirectory, artifactFileName);
+
+		try(JarFile jarFile = new JarFile(inputFile)){
+
+			try(JarOutputStream jarOs = new JarOutputStream(new FileOutputStream(outputFile))){
+				byte[] buffer = new byte[16 * 1024];
+
+				for(Enumeration<JarEntry> entries = jarFile.entries(); entries.hasMoreElements(); ){
+					JarEntry jarEntry = entries.nextElement();
+
+					if(predicate.test(jarEntry)){
+						jarOs.putNextEntry(jarEntry);
+
+						try(InputStream jarIs = jarFile.getInputStream(jarEntry)){
+
+							while(true){
+								int length = jarIs.read(buffer);
+								if(length < 0){
+									break;
+								}
+
+								jarOs.write(buffer, 0, length);
+							}
+						}
+
+						jarOs.closeEntry();
+					}
+				}
+			}
+		}
+
+		return artifactFileName;
+	}
+
+	private String copyArtifactFile(Artifact artifact) throws IOException {
 		String artifactFileName = artifact.getArtifactId() + "-" + artifact.getVersion() + ".jar";
 
-		Path inputPath = file.toPath();
-		Path outputPath = (this.outputDirectory.toPath()).resolve(artifactFileName);
+		File inputFile = artifact.getFile();
+		File outputFile = new File(this.outputDirectory, artifactFileName);
 
-		Files.copy(inputPath, outputPath);
+		Files.copy(inputFile.toPath(), outputFile.toPath());
 
 		return artifactFileName;
 	}
