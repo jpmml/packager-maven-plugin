@@ -26,6 +26,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
 
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.AbstractMojo;
@@ -197,7 +198,20 @@ public class CreateClasspathMojo extends AbstractMojo {
 					JarEntry jarEntry = entries.nextElement();
 
 					if(predicate.test(jarEntry)){
-						jarOs.putNextEntry(jarEntry);
+						JarEntry safeJarEntry = new JarEntry(jarEntry);
+
+						int method = safeJarEntry.getMethod();
+						switch(method){
+							case ZipEntry.STORED:
+								break;
+							case ZipEntry.DEFLATED:
+								safeJarEntry.setCompressedSize(-1L);
+								break;
+							default:
+								throw new IllegalArgumentException();
+						}
+
+						jarOs.putNextEntry(safeJarEntry);
 
 						try(InputStream jarIs = jarFile.getInputStream(jarEntry)){
 
