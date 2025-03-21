@@ -17,15 +17,12 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Predicate;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
-import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 
 import org.apache.maven.artifact.Artifact;
@@ -36,8 +33,6 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
-import org.vafer.jdependency.Clazz;
-import org.vafer.jdependency.Clazzpath;
 
 @Mojo (
 	name = "create-classpath",
@@ -99,56 +94,12 @@ public class CreateClasspathMojo extends AbstractMojo {
 			List<String> elements = new ArrayList<>();
 
 			if(this.minify != null){
-				Clazzpath clazzpath = new Clazzpath();
-
-				Set<String> entryPoints = new LinkedHashSet<>();
-
-				entryPoints.addAll(this.minify.getEntryPoints());
-
-				for(Artifact artifact : artifacts){
-					File artifactFile = artifact.getFile();
-
-					clazzpath.addClazzpathUnit(artifactFile);
-
-					entryPoints.addAll(this.minify.getEntryPoints(artifactFile));
-				}
-
-				Set<Clazz> entryPointClazzes = entryPoints.stream()
-					.map(entryPoint -> clazzpath.getClazz(entryPoint))
-					.collect(Collectors.toSet());
-
-				Set<Clazz> removableClazzes = clazzpath.getClazzes();
-
-				entryPointClazzes.stream()
-					.forEach(entryPointClazz -> {
-						removableClazzes.remove(entryPointClazz);
-
-						Set<Clazz> transitiveDependencyClazzes = entryPointClazz.getTransitiveDependencies();
-						if(!transitiveDependencyClazzes.isEmpty()){
-							removableClazzes.removeAll(transitiveDependencyClazzes);
-						}
-					});
-
-				Predicate<JarEntry> predicate = new Predicate<JarEntry>(){
-
-					@Override
-					public boolean test(JarEntry jarEntry){
-						String name = jarEntry.getName();
-
-						if(name.endsWith(".class")){
-							Clazz clazz = clazzpath.getClazz(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
-
-							return !removableClazzes.contains(clazz);
-						}
-
-						return true;
-					}
-				};
+				Predicate<JarEntry> minifyPredicate = this.minify.createMinifyPredicate(artifacts);
 
 				for(Artifact artifact : artifacts){
 
 					if(this.minify.accept(artifact)){
-						elements.add(copyArtifactFile(artifact, predicate));
+						elements.add(copyArtifactFile(artifact, minifyPredicate));
 					} else
 
 					{
