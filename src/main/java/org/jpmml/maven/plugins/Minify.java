@@ -23,12 +23,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.vafer.jdependency.Clazz;
 import org.vafer.jdependency.Clazzpath;
 
-public class Minify {
-
-	@Parameter (
-		required = true
-	)
-	Set<String> artifacts;
+public class Minify extends Task {
 
 	@Parameter
 	Set<String> entryPoints = Collections.emptySet();
@@ -39,10 +34,6 @@ public class Minify {
 	@Parameter
 	Set<String> serviceEntryPoints = Collections.emptySet();
 
-
-	public boolean accept(Artifact artifact){
-		return this.artifacts.contains(artifact.getGroupId() + ":" + artifact.getArtifactId());
-	}
 
 	public Predicate<JarEntry> createMinifyPredicate(Collection<Artifact> artifacts) throws IOException {
 		Clazzpath clazzpath = new Clazzpath();
