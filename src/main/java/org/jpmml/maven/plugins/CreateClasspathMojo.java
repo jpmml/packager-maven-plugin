@@ -135,7 +135,7 @@ public class CreateClasspathMojo extends AbstractMojo {
 	}
 
 	private String copyArtifactFile(Artifact artifact, Predicate<JarEntry> predicate) throws IOException {
-		String artifactFileName = artifact.getArtifactId() + "-" + artifact.getVersion() + "-minified.jar";
+		String artifactFileName = artifact.getArtifactId() + "-" + artifact.getVersion() + "-repackaged.jar";
 
 		File inputFile = artifact.getFile();
 		File outputFile = new File(this.outputDirectory, artifactFileName);
