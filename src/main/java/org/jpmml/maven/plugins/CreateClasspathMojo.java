@@ -19,6 +19,7 @@ import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -50,6 +51,9 @@ public class CreateClasspathMojo extends AbstractMojo {
 
 	@Parameter
 	Minify minify;
+
+	@Parameter
+	Modify modify;
 
 	@Parameter (
 		required = true
@@ -93,18 +97,18 @@ public class CreateClasspathMojo extends AbstractMojo {
 
 			List<String> elements = new ArrayList<>();
 
-			if(this.minify != null){
-				Predicate<JarEntry> minifyPredicate = this.minify.createMinifyPredicate(artifacts);
+			if(this.minify != null || this.modify != null){
+
+				if(this.minify != null){
+					this.minify.createMinifyPredicate(artifacts);
+				} // End if
+
+				if(this.modify != null){
+					this.modify.createModifyFunction();
+				}
 
 				for(Artifact artifact : artifacts){
-
-					if(this.minify.accept(artifact)){
-						elements.add(copyArtifactFile(artifact, minifyPredicate));
-					} else
-
-					{
-						elements.add(copyArtifactFile(artifact));
-					}
+					elements.add(copyArtifactFile(artifact, this.minify, this.modify));
 				}
 			} else
 
@@ -134,50 +138,82 @@ public class CreateClasspathMojo extends AbstractMojo {
 		}
 	}
 
-	private String copyArtifactFile(Artifact artifact, Predicate<JarEntry> predicate) throws IOException {
+	private String copyArtifactFile(Artifact artifact, Minify minify, Modify modify) throws IOException {
 		String artifactFileName = artifact.getArtifactId() + "-" + artifact.getVersion() + "-repackaged.jar";
 
 		File inputFile = artifact.getFile();
 		File outputFile = new File(this.outputDirectory, artifactFileName);
 
 		try(JarFile jarFile = new JarFile(inputFile)){
+			Predicate<JarEntry> minifyPredicate = null;
+			if(minify != null && minify.accept(artifact)){
+				minifyPredicate = minify.getMinifyPredicate();
+			}
+
+			Function<byte[], byte[]> modifyFunction = null;
+			if(modify != null && modify.accept(artifact)){
+				modifyFunction = modify.getModifyFunction();
+			}
 
 			try(JarOutputStream jarOs = new JarOutputStream(new FileOutputStream(outputFile))){
-				byte[] buffer = new byte[16 * 1024];
 
+				entries:
 				for(Enumeration<JarEntry> entries = jarFile.entries(); entries.hasMoreElements(); ){
 					JarEntry jarEntry = entries.nextElement();
 
-					if(predicate.test(jarEntry)){
-						JarEntry safeJarEntry = new JarEntry(jarEntry);
+					minify:
+					if(minifyPredicate != null){
 
-						int method = safeJarEntry.getMethod();
-						switch(method){
-							case ZipEntry.STORED:
-								break;
-							case ZipEntry.DEFLATED:
-								safeJarEntry.setCompressedSize(-1L);
-								break;
-							default:
-								throw new IllegalArgumentException();
+						if(minifyPredicate.test(jarEntry)){
+							break minify;
 						}
 
-						jarOs.putNextEntry(safeJarEntry);
+						continue entries;
+					}
+
+					JarEntry safeJarEntry = new JarEntry(jarEntry);
+
+					int method = safeJarEntry.getMethod();
+					switch(method){
+						case ZipEntry.STORED:
+							break;
+						case ZipEntry.DEFLATED:
+							safeJarEntry.setCompressedSize(-1L);
+							break;
+						default:
+							throw new IllegalArgumentException();
+					}
+
+					jarOs.putNextEntry(safeJarEntry);
+
+					modify:
+					if(modifyFunction != null){
+						String name = jarEntry.getName();
+
+						if(!name.endsWith(".class")){
+							break modify;
+						}
+
+						byte[] bytes;
 
 						try(InputStream jarIs = jarFile.getInputStream(jarEntry)){
-
-							while(true){
-								int length = jarIs.read(buffer);
-								if(length < 0){
-									break;
-								}
-
-								jarOs.write(buffer, 0, length);
-							}
+							bytes = jarIs.readAllBytes();
 						}
 
-						jarOs.closeEntry();
+						bytes = modifyFunction.apply(bytes);
+
+						safeJarEntry.setSize(bytes.length);
+
+						jarOs.write(bytes, 0, bytes.length);
+
+						continue entries;
 					}
+
+					try(InputStream jarIs = jarFile.getInputStream(jarEntry)){
+						jarIs.transferTo(jarOs);
+					}
+
+					jarOs.closeEntry();
 				}
 			}
 		}

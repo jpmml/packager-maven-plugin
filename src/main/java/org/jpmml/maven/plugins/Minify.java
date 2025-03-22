@@ -34,8 +34,14 @@ public class Minify extends Task {
 	@Parameter
 	Set<String> serviceEntryPoints = Collections.emptySet();
 
+	private Predicate<JarEntry> minifyPredicate = null;
 
-	public Predicate<JarEntry> createMinifyPredicate(Collection<Artifact> artifacts) throws IOException {
+
+	public Predicate<JarEntry> getMinifyPredicate(){
+		return this.minifyPredicate;
+	}
+
+	void createMinifyPredicate(Collection<Artifact> artifacts) throws IOException {
 		Clazzpath clazzpath = new Clazzpath();
 
 		Set<String> entryPoints = new LinkedHashSet<>();
@@ -82,7 +88,7 @@ public class Minify extends Task {
 			}
 		};
 
-		return predicate;
+		this.minifyPredicate = predicate;
 	}
 
 	Set<String> getEntryPoints(){
