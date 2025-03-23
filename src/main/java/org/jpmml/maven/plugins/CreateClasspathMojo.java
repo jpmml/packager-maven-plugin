@@ -53,6 +53,9 @@ public class CreateClasspathMojo extends AbstractMojo {
 	int compressionLevel = -1;
 
 	@Parameter
+	boolean directories = true;
+
+	@Parameter
 	Minify minify;
 
 	@Parameter
@@ -167,6 +170,16 @@ public class CreateClasspathMojo extends AbstractMojo {
 				entries:
 				for(Enumeration<JarEntry> entries = jarFile.entries(); entries.hasMoreElements(); ){
 					JarEntry jarEntry = entries.nextElement();
+
+					directories:
+					if(jarEntry.isDirectory()){
+
+						if(this.directories){
+							break directories;
+						}
+
+						continue entries;
+					}
 
 					minify:
 					if(minifyPredicate != null){
