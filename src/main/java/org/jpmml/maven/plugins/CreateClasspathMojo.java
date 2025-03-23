@@ -50,6 +50,9 @@ public class CreateClasspathMojo extends AbstractMojo {
 	MavenProject project;
 
 	@Parameter
+	int compressionLevel = -1;
+
+	@Parameter
 	Minify minify;
 
 	@Parameter
@@ -156,6 +159,10 @@ public class CreateClasspathMojo extends AbstractMojo {
 			}
 
 			try(JarOutputStream jarOs = new JarOutputStream(new FileOutputStream(outputFile))){
+
+				if(this.compressionLevel != -1){
+					jarOs.setLevel(this.compressionLevel);
+				}
 
 				entries:
 				for(Enumeration<JarEntry> entries = jarFile.entries(); entries.hasMoreElements(); ){
